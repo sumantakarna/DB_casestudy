@@ -1,0 +1,16 @@
+name: dws_trade_pipeline
+version: "1.0.0"
+config-version: 2
+profile: dws_trade_pipeline
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+models:
+  dws_trade_pipeline:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: incremental

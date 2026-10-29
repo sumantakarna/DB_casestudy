@@ -1,0 +1,4 @@
+database_name = "TRADE_DB"
+warehouse_name = "TRADE_PIPELINE_WH"
+warehouse_size = "XSMALL"
+# Inject sensitive credentials via environment variables or a secrets manager.

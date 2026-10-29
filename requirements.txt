@@ -1,0 +1,7 @@
+snowflake-connector-python>=3.12,<5
+python-dotenv>=1.0,<2
+dbt-core>=1.8,<2
+dbt-snowflake>=1.8,<2
+streamlit>=1.38,<2
+pandas>=2.2,<4
+pytest>=8,<10

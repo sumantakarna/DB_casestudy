@@ -1,0 +1,21 @@
+version: 2
+models:
+  - name: fct_current_trades
+    description: Latest accepted trade version; expired rows remain available.
+    columns:
+      - name: TRADE_ID
+        data_tests: [not_null, unique]
+      - name: VERSION
+        data_tests: [not_null]
+      - name: TRADE_STATUS
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['VALID', 'EXPIRED']
+  - name: fct_rejected_trades
+    description: Rejected events and reasons for audit.
+    columns:
+      - name: EVENT_ID
+        data_tests: [not_null, unique]
+      - name: REJECTION_REASON
+        data_tests: [not_null]

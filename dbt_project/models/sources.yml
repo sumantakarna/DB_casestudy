@@ -1,0 +1,8 @@
+version: 2
+sources:
+  - name: raw
+    database: TRADE_DB
+    schema: RAW
+    tables:
+      - name: trade_events
+        identifier: TRADE_EVENTS
