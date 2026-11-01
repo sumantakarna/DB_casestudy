@@ -1,0 +1,16 @@
+name=trade-snowflake-sink
+connector.class=com.snowflake.kafka.connector.SnowflakeSinkConnector
+tasks.max=4
+topics=trade.events
+snowflake.topic2table.map=trade.events:TRADE_EVENTS
+snowflake.database.name=DB_TRADE_DB
+snowflake.schema.name=RAW
+snowflake.role.name=TRADE_INGEST_ROLE
+snowflake.warehouse.name=TRADE_LOAD_WH
+snowflake.url.name=<account>.snowflakecomputing.com
+snowflake.user.name=<service_user>
+snowflake.private.key=<secret-manager-reference>
+snowflake.ingestion.method=SNOWPIPE_STREAMING
+key.converter=org.apache.kafka.connect.storage.StringConverter
+value.converter=org.apache.kafka.connect.json.JsonConverter
+value.converter.schemas.enable=false

@@ -1,63 +1,42 @@
-"""Generate JSONL trade events, including deterministic rule-test examples."""
-import argparse
-import hashlib
-import json
-import random
-import uuid
-from datetime import date, datetime, timedelta, timezone
+#!/usr/bin/env python3
+"""Generate deterministic sample trade files and a completion manifest."""
+import argparse, csv, hashlib, json, random, uuid
+from datetime import date, timedelta
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
+FIELDS = ["event_id","source_system","source_type","batch_id","trade_id","version","event_type","trade_date","maturity_date","counterparty","instrument","currency","notional","price","side","source_sequence"]
 
-def make_event(trade_id, version, *, maturity_date=None, quantity=None, price=None,
-               event_timestamp=None, source_system="SIMULATOR", batch_id="demo-batch"):
-    event_timestamp = event_timestamp or datetime.now(timezone.utc).replace(microsecond=0)
-    payload = {
-        "trade_id": trade_id, "version": version,
-        "instrument": "BOND" if int(hashlib.sha256(trade_id.encode()).hexdigest(), 16) % 2 else "EQUITY",
-        "trade_side": "BUY", "quantity": quantity if quantity is not None else round(random.uniform(1, 1000), 4),
-        "price": price if price is not None else round(random.uniform(10, 250), 4),
-        "currency": "USD", "trade_date": date.today().isoformat(),
-        "maturity_date": (maturity_date or (date.today() + timedelta(days=365))).isoformat(),
-        "counterparty": f"CP-{int(hashlib.sha256(trade_id.encode()).hexdigest(), 16) % 100:03d}",
-        "event_timestamp": event_timestamp.isoformat().replace("+00:00", "Z"),
-        "source_system": source_system, "batch_id": batch_id,
-    }
-    stable = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    payload["event_id"] = hashlib.sha256(stable.encode()).hexdigest()
-    return payload
+def make_rows(n, batch_id, seed=7):
+    random.seed(seed); rows=[]
+    for i in range(n):
+        maturity = date.today() + timedelta(days=random.randint(-10, 1500))
+        rows.append({"event_id":str(uuid.uuid4()),"source_system":"SIMULATED_TRADE_FEED","source_type":"FILE","batch_id":batch_id,"trade_id":f"TRD-{i//2:09d}","version":(i%2)+1,"event_type":"UPSERT","trade_date":date.today().isoformat(),"maturity_date":maturity.isoformat(),"counterparty":f"CP-{i%250:04d}","instrument":random.choice(["IRS","FX_FORWARD","BOND","OPTION"]),"currency":random.choice(["USD","EUR","GBP","JPY"]),"notional":round(random.uniform(10000,50000000),2),"price":round(random.uniform(0.1,150),6),"side":random.choice(["BUY","SELL"]),"source_sequence":i+1})
+    return rows
 
-
-def generate_events(count, batch_id, seed=42):
-    random.seed(seed)
-    events = [make_event(f"TRD-{i+1:07d}", 1, batch_id=batch_id) for i in range(count)]
-    if count >= 4:
-        events += [
-            make_event("TRD-DEMO-001", 2, batch_id=batch_id),
-            make_event("TRD-DEMO-001", 1, batch_id=batch_id),
-            make_event("TRD-DEMO-002", 1, maturity_date=date.today()-timedelta(days=1), batch_id=batch_id),
-            make_event("TRD-DEMO-003", 1, quantity=-10, batch_id=batch_id),
-        ]
-    return events
-
+def write_file(path, fmt, rows):
+    if fmt == "jsonl":
+        with path.open("w",encoding="utf-8") as f:
+            for r in rows: f.write(json.dumps(r,separators=(",",":"))+"\n")
+    elif fmt == "csv":
+        with path.open("w",newline="",encoding="utf-8") as f:
+            w=csv.DictWriter(f,fieldnames=FIELDS); w.writeheader(); w.writerows(rows)
+    elif fmt == "xml":
+        root=ET.Element("Trades")
+        for r in rows:
+            t=ET.SubElement(root,"Trade")
+            for k,v in r.items(): ET.SubElement(t,k).text=str(v)
+        ET.ElementTree(root).write(path,encoding="utf-8",xml_declaration=True)
+    else: raise ValueError(fmt)
+    b=path.read_bytes(); return {"file_name":path.name,"format":fmt,"bytes":len(b),"sha256":hashlib.sha256(b).hexdigest(),"expected_records":len(rows)}
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="data/trades.jsonl")
-    parser.add_argument("--count", type=int, default=100)
-    parser.add_argument("--batch-id", default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-    if args.count < 1:
-        parser.error("--count must be >= 1")
-    batch_id = args.batch_id or f"batch-{uuid.uuid4().hex[:12]}"
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    events = generate_events(args.count, batch_id, args.seed)
-    with output.open("w", encoding="utf-8") as stream:
-        for event in events:
-            stream.write(json.dumps(event, separators=(",", ":")) + "\n")
-    print(f"Wrote {len(events)} events to {output}; batch_id={batch_id}")
-
-
-if __name__ == "__main__":
-    main()
+    p=argparse.ArgumentParser(); p.add_argument("--out",default="sample_data"); p.add_argument("--rows",type=int,default=1000); p.add_argument("--format",choices=["jsonl","csv","xml","all"],default="all"); p.add_argument("--batch-id",default="DEMO-001"); a=p.parse_args()
+    out=Path(a.out); out.mkdir(parents=True,exist_ok=True); rows=make_rows(a.rows,a.batch_id); formats=["jsonl","csv","xml"] if a.format=="all" else [a.format]; files=[]
+    for fmt in formats:
+        path=out/f"{a.batch_id.lower()}_trades.{fmt}"; files.append(write_file(path,fmt,rows))
+    manifest={"batch_id":a.batch_id,"source_system":"SIMULATED_TRADE_FEED","created_utc":date.today().isoformat(),"expected_files":len(files),"expected_records":sum(x["expected_records"] for x in files),"files":files,"completion_marker":"_SUCCESS"}
+    (out/f"{a.batch_id.lower()}_manifest.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
+    (out/"_SUCCESS").write_text(a.batch_id,encoding="utf-8")
+    print(f"Generated {len(files)} files, {a.rows} records per file in {out}")
+if __name__=="__main__": main()

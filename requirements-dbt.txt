@@ -1,0 +1,2 @@
+dbt-snowflake>=1.8,<2.0
+dbt-utils>=1.1

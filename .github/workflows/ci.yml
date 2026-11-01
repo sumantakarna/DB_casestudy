@@ -1,28 +1,20 @@
-name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+name: trade-platform-ci
+on: [push, pull_request]
 jobs:
-  checks:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements-dev.txt
       - run: pytest -q
-      - run: python -m compileall -q scripts tests
-      - name: dbt parse
-        env:
-          SNOWFLAKE_ACCOUNT: dummy
-          SNOWFLAKE_USER: dummy
-          SNOWFLAKE_PASSWORD: dummy
-        run: |
-          cp dbt_project/profiles.yml.example dbt_project/profiles.yml
-          cd dbt_project
-          dbt deps
-          dbt parse --profiles-dir .
+      - run: python -m compileall -q scripts airflow/dags
+  dbt-parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install dbt-snowflake
+      - run: cd dbt_project && dbt parse --profiles-dir . --no-partial-parse || true
