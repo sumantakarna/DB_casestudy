@@ -1,0 +1,8 @@
+version: 2
+sources:
+  - name: raw
+    database: DB_TRADE_DB
+    schema: RAW
+    tables:
+      - name: trade_events
+        description: Immutable raw trade event landing table.

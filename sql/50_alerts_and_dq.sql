@@ -1,0 +1,22 @@
+-- Configure an email notification integration after recipient verification.
+-- CREATE NOTIFICATION INTEGRATION TRADE_EMAIL_INT TYPE=EMAIL ENABLED=TRUE
+--   ALLOWED_RECIPIENTS=('data-ops@example.com');
+-- CREATE ALERT DB_TRADE_DB.OPS.ALERT_FAILED_BATCH
+--   WAREHOUSE=TRADE_LOAD_WH SCHEDULE='5 MINUTE'
+--   IF (EXISTS (SELECT 1 FROM DB_TRADE_DB.OPS.BATCH_CONTROL
+--               WHERE STATUS IN ('RECON_FAILED','FAILED','LATE')))
+--   THEN CALL SYSTEM$SEND_EMAIL('TRADE_EMAIL_INT','data-ops@example.com',
+--        'Trade pipeline exception','One or more trade batches failed or missed SLA. Check OPS.BATCH_CONTROL.');
+-- ALTER ALERT DB_TRADE_DB.OPS.ALERT_FAILED_BATCH RESUME;
+
+-- Example Data Metric Function associations (Enterprise Edition feature; validate exact DMF support for your table types/edition).
+-- ALTER TABLE DB_TRADE_DB.CURATED.CURRENT_TRADES
+--   ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (TRADE_ID);
+-- ALTER TABLE DB_TRADE_DB.CURATED.CURRENT_TRADES
+--   ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (TRADE_ID);
+-- Use expectations / anomaly detection and data-quality notifications where available.
+
+-- Event table setup (requires appropriate account privileges).
+-- CREATE EVENT TABLE IF NOT EXISTS DB_TRADE_DB.OPS.SNOWFLAKE_EVENT_TABLE;
+-- ALTER DATABASE DB_TRADE_DB SET EVENT_TABLE=DB_TRADE_DB.OPS.SNOWFLAKE_EVENT_TABLE;
+-- ALTER SESSION SET LOG_LEVEL='INFO', TRACE_LEVEL='ON_EVENT';
