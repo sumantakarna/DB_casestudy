@@ -6,46 +6,23 @@ A Snowflake-centric, metadata-driven reference implementation for multi-source, 
 
 ## Architecture
 
-```plantuml
-@startuml
-left to right direction
-actor "Trade producers" as P
-rectangle "Source adapters" {
-  component "Files: XML/JSON/CSV/Parquet" as F
-  component "DB CDC: Debezium/managed CDC" as C
-  component "Kafka / APIs" as K
-}
-cloud "S3 / ADLS / GCS" as O
-queue "Kafka" as Q
-database "Snowflake" {
-  component "Snowpipe / Snowpipe Streaming" as I
-  database "RAW + FILE_LEDGER" as R
-  component "Standardize + DQ (SQL/dbt)" as D
-  database "CURATED / HISTORY / REJECTS" as T
-  database "RECON + OPS + EVENT" as M
-}
-component "Airflow (cross-system)" as A
-component "Snowflake Tasks / Streams" as S
-component "GitHub Actions + Terraform" as CI
-component "Grafana / Datadog / Streamlit" as V
-P --> F
-P --> C
-P --> K
-F --> O
-C --> Q
-K --> Q
-O --> I
-Q --> I
-I --> R
-R --> D
-D --> T
-D --> M
-A --> S
-S --> D
-CI --> A
-CI --> D
-M --> V
-@enduml
+```mermaid
+flowchart LR
+  P[Trade producers] --> F[Files: XML / JSON / CSV / Parquet]
+  P --> C[DB CDC: Debezium] --> Q[(Kafka)]
+  P --> K[Kafka / APIs] --> Q
+  F --> O[(S3 / ADLS / GCS or internal stage)]
+  O --> I[COPY / Snowpipe]
+  Q --> I2[Kafka connector / Snowpipe Streaming]
+  I --> R[(RAW.TRADE_EVENTS + OPS manifest)]
+  I2 --> R
+  R --> D[CLASSIFY_BATCH: set-based DQ] --> T[(CURATED history + current, AUDIT rejects)]
+  T --> M[RECONCILE_BATCH -> OPS.RECON_RESULTS]
+  R --> DBT[dbt: standardise + DQ model + tests]
+  A[Airflow] --> D
+  A --> T
+  A --> M
+  M --> V[Streamlit / Grafana]
 ```
 
 ## Key design decisions
@@ -75,29 +52,50 @@ M --> V
 ## Repository layout
 
 ```text
-sql/                 Snowflake bootstrap, ingestion, DQ, reconciliation, monitoring
- dbt_project/        dbt project and tests
- scripts/             Multi-format sample generator and manifest writer
- airflow/dags/        Cross-system orchestration example
- kafka/               Kafka Connect example configuration
- terraform/           Snowflake infrastructure starter
- .github/workflows/   CI validation
- docs/                Runbook, scaling, architecture and interview notes
- tests/               Local unit tests
+sql/                 00_bootstrap, 20_trade_apply, 30_monitoring, 40_reconciliation, 50_alerts_and_dq, 60_grants
+dbt_project/         staging view, DQ model, tests (ci/ has a dummy profile for `dbt parse`)
+scripts/             generate_trades.py (sample batches + manifest), load_to_snowflake.py (verify + load + register)
+airflow/dags/        trade_platform.py (batch DAG), trade_pipeline_dag.py (demo end-to-end)
+streamlit_app/       monitoring dashboard
+kafka/               Kafka Connect example configuration
+terraform/           Snowflake infrastructure starter
+.github/workflows/   CI: tests, dbt parse, terraform validate
+docs/                Runbook, decisions, interview walkthrough, review notes
+tests/               Unit and repo-consistency tests
 ```
 
 ## Quick start (Snowflake)
 
-1. Create a Snowflake role/service user and configure key-pair auth. Never commit secrets.
-2. Install dbt with `pip install -r requirements-dbt.txt`; install Airflow and its Snowflake provider in a managed Airflow environment using `requirements-airflow.txt`.
-3. Run `sql/00_bootstrap.sql` with an admin/deployment role. It creates database, schemas, warehouses, file formats, tables, stages (placeholder URL), pipes and procedures.
-4. Replace `@DB_TRADE_DB.RAW.TRADE_EXT_STAGE` URL and storage integration with your cloud provider configuration. Configure event notifications and pipe auto-ingest.
-5. Generate sample files: `python scripts/generate_trades.py --out ./sample_data --rows 10000 --format all --batch-id DEMO-001`.
-6. Upload data files to the stage path. Upload the manifest last, then call `CALL DB_TRADE_DB.OPS.REGISTER_MANIFEST(PARSE_JSON('<manifest-json>'));`. For local/internal-stage demos use `PUT` then `COPY INTO`; production should use cloud object storage and event notifications.
-7. Run dbt: `cd dbt_project && dbt deps && dbt build --vars '{"batch_id":"DEMO-001"}'`.
-8. Run reconciliation SQL in `sql/40_reconciliation.sql`.
+1. Create a Snowflake service user with key-pair auth; copy `.env.example` to `.env` (never commit it).
+2. `make setup` (Python deps). Install dbt separately: `pip install -r requirements-dbt.txt`; copy `dbt_project/profiles.yml.example` to `dbt_project/profiles.yml`.
+3. In Snowflake run, in order: `sql/00_bootstrap.sql`, `sql/20_trade_apply.sql`, `sql/40_reconciliation.sql`, `sql/60_grants.sql` (grant the roles to your service users).
+4. `make generate BATCH=DEMO-001` writes JSONL + CSV + XML files (rows split across them, with planted bad records), a manifest and `_SUCCESS`.
+5. `make verify BATCH=DEMO-001` checks files against the manifest (size, SHA-256, record count, UTF-8) without touching Snowflake.
+6. `make load BATCH=DEMO-001` verifies, PUTs to the internal stage, COPYs with a per-format mapping, and registers the manifest only if loaded rows match.
+7. Process the batch: `CALL DB_TRADE_DB.STANDARD.CLASSIFY_BATCH('DEMO-001'); CALL DB_TRADE_DB.CURATED.APPLY_BATCH('DEMO-001'); CALL DB_TRADE_DB.OPS.RECONCILE_BATCH('DEMO-001');` (Airflow does this, see `airflow/dags/trade_platform.py`), then `cd dbt_project && dbt build --vars '{"batch_id":"DEMO-001"}'`.
+8. `make dashboard` for the Streamlit monitor.
+
+For production sources use the same RAW table: `python scripts/load_to_snowflake.py --print-sql xml` prints the COPY mapping for a Snowpipe definition; Kafka/CDC use the connector in `kafka/`.
 
 ## Important deployment notes
+
+- `APPLY_BATCH` refuses to run unless the batch was classified and RAW is unchanged since. Duplicate deliveries are suppressed (one copy kept); conflicting duplicates and other rule failures are rejected with the original payload.
+- Pipes need a storage/notification integration, so they are templates, not created by the bootstrap. One pipe per file format.
+- For streaming, use Snowpipe Streaming high-performance architecture only when your account/region/SDK support it; the Kafka connector is a valid alternative.
+- Pipe load order is not guaranteed. Trade version ordering uses version and source sequence, never arrival order.
+- The apply procedure serializes by batch. For parallel processing partition by `HASH(trade_id)` or use a single-writer queue.
+- Same-version replacement is deterministic latest-event-wins (source sequence). Agree source precedence with the business.
+- A maturity date earlier than today is rejected on arrival; a stored trade whose maturity has since passed becomes EXPIRED (maturity today is still ACTIVE). Confirm timezone and market-calendar rules with the business.
+- Rules are set-based SQL in one pass. Run `CLASSIFY_BATCH` on `TRADE_TRANSFORM_WH` and size that warehouse up for large batches; Snowpark is only worth adding for parsing that is awkward in SQL.
+- Account Usage views have latency; use Information Schema for near-real-time operations.
+
+## Local tests
+
+```bash
+make setup
+make test
+```
+
 
 - The sample pipe demonstrates canonical JSONL ingestion. Configure one pipe per source path/file format where needed, or normalize with source adapters before landing. Avoid a single pipe trying to parse unrelated file encodings.
 - For streaming, use Snowpipe Streaming high-performance architecture only when the account/region/cloud and client SDK support it. The Kafka connector path is a valid alternative.
@@ -116,4 +114,4 @@ pytest -q
 
 ## CI/CD
 
-GitHub Actions runs Python tests and SQL/dbt static checks. Configure GitHub repository secrets for Snowflake deployment. Promote dev → test → prod using separate roles, databases/schemas, storage integrations and approval gates. Terraform is intentionally a starter: storage notification wiring is cloud-specific and should be managed in the cloud account module.
+GitHub Actions runs Python tests, `dbt parse` (dummy profile) and `terraform validate`. Configure GitHub repository secrets for Snowflake deployment. Promote dev → test → prod using separate roles, databases/schemas, storage integrations and approval gates. Terraform is intentionally a starter: storage notification wiring is cloud-specific and should be managed in the cloud account module.

@@ -4,10 +4,7 @@ config-version: 2
 profile: db_trade_platform
 model-paths: [models]
 test-paths: [tests]
+# Models land in the profile's schema (STANDARD). No custom +schema: dbt would otherwise build STANDARD_STANDARD.
 models:
   db_trade_platform:
     +materialized: view
-    staging:
-      +schema: STANDARD
-    marts:
-      +schema: STANDARD

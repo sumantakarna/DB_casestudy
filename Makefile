@@ -1,11 +1,23 @@
-.PHONY: setup generate load test dashboard
+.PHONY: setup generate verify load test dashboard dbt-parse
+BATCH ?= DEMO-001
+
 setup:
-	pip install -r requirements.txt
+	pip install -r requirements.txt -r requirements-dev.txt
+
 generate:
-	python scripts/generate_trades.py --output data/trades.jsonl --count 100 --batch-id demo-batch
+	python scripts/generate_trades.py --out sample_data --rows 1000 --format all --batch-id $(BATCH) --inject-errors
+
+verify:
+	python scripts/load_to_snowflake.py --dir sample_data --batch-id $(BATCH) --dry-run
+
 load:
-	python scripts/load_to_snowflake.py --file data/trades.jsonl
+	python scripts/load_to_snowflake.py --dir sample_data --batch-id $(BATCH)
+
 test:
-	pytest -q
+	python -m pytest -q
+
+dbt-parse:
+	cd dbt_project && dbt parse --profiles-dir ci
+
 dashboard:
 	streamlit run streamlit_app/app.py

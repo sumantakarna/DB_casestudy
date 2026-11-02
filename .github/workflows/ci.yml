@@ -8,13 +8,19 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.11'}
       - run: pip install -r requirements-dev.txt
-      - run: pytest -q
-      - run: python -m compileall -q scripts airflow/dags
+      - run: python -m pytest -q
+      - run: python -m compileall -q scripts airflow/dags streamlit_app
   dbt-parse:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.11'}
-      - run: pip install dbt-snowflake
-      - run: cd dbt_project && dbt parse --profiles-dir . --no-partial-parse || true
+      - run: pip install -r requirements-dbt.txt
+      - run: cd dbt_project && dbt parse --profiles-dir ci
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: cd terraform && terraform fmt -check && terraform init -backend=false && terraform validate

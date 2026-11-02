@@ -1,32 +1,29 @@
-# Starter IaC: validate provider schema/version and least-privilege setup before apply.
+# Starter IaC. Pin/validate the provider version; roles and grants live in sql/60_grants.sql.
 provider "snowflake" {
-  organization_name = var.snowflake_organization
-  account_name      = var.snowflake_account
-  user              = var.snowflake_user
-  password          = var.snowflake_password
-  role              = var.snowflake_role
+  account       = var.snowflake_account
+  user          = var.snowflake_user
+  role          = var.snowflake_role
+  authenticator = "JWT"
+  private_key   = var.snowflake_private_key
 }
+
 resource "snowflake_database" "trade_db" {
   name                        = var.database_name
   comment                     = "Trade processing case study"
   data_retention_time_in_days = 1
 }
-resource "snowflake_warehouse" "trade_wh" {
-  name           = var.warehouse_name
-  warehouse_size = var.warehouse_size
+
+resource "snowflake_schema" "schemas" {
+  for_each = toset(["RAW", "STANDARD", "CURATED", "AUDIT", "OPS"])
+  database = snowflake_database.trade_db.name
+  name     = each.key
+}
+
+resource "snowflake_warehouse" "wh" {
+  for_each       = var.warehouses
+  name           = each.key
+  warehouse_size = each.value
   auto_suspend   = 60
   auto_resume    = true
-  comment        = "Trade pipeline warehouse"
-}
-resource "snowflake_schema" "raw" {
-  database = snowflake_database.trade_db.name
-  name     = "RAW"
-}
-resource "snowflake_schema" "curated" {
-  database = snowflake_database.trade_db.name
-  name     = "CURATED"
-}
-resource "snowflake_schema" "audit" {
-  database = snowflake_database.trade_db.name
-  name     = "AUDIT"
+  comment        = "Trade pipeline workload warehouse"
 }
