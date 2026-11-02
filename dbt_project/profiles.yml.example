@@ -1,3 +1,4 @@
+# Copy to profiles.yml (git-ignored) or point DBT_PROFILES_DIR at a folder containing it.
 db_trade_platform:
   target: dev
   outputs:
@@ -5,8 +6,8 @@ db_trade_platform:
       type: snowflake
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      role: "{{ env_var('DBT_SNOWFLAKE_ROLE', 'TRADE_TRANSFORM_ROLE') }}"
+      warehouse: "{{ env_var('DBT_SNOWFLAKE_WAREHOUSE', 'TRADE_TRANSFORM_WH') }}"
       database: DB_TRADE_DB
       schema: STANDARD
       authenticator: snowflake_jwt

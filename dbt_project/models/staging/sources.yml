@@ -5,4 +5,5 @@ sources:
     schema: RAW
     tables:
       - name: trade_events
-        description: Immutable raw trade event landing table.
+        identifier: TRADE_EVENTS
+        description: Immutable raw trade event landing table (all source formats).

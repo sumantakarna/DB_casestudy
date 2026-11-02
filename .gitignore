@@ -4,7 +4,14 @@ __pycache__/
 .pytest_cache/
 .dbt/
 target/
+dbt_packages/
 logs/
 profiles.yml
+!dbt_project/ci/profiles.yml
 sample_data/
+data/
 *.pem
+*.p8
+.terraform/
+*.tfstate*
+terraform.tfvars

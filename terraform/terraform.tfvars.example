@@ -1,4 +1,2 @@
-database_name = "TRADE_DB"
-warehouse_name = "TRADE_PIPELINE_WH"
-warehouse_size = "XSMALL"
-# Inject sensitive credentials via environment variables or a secrets manager.
+database_name = "DB_TRADE_DB"
+# snowflake_account / snowflake_user: set here; snowflake_private_key via TF_VAR_snowflake_private_key or a secret manager.

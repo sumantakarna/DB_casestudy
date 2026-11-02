@@ -1,0 +1,17 @@
+version: 2
+# Source-data findings are warnings: bad records are quarantined by the pipeline, not a reason to fail dbt.
+models:
+  - name: stg_trade_events
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null: {config: {severity: warn}}
+      - name: trade_id
+        data_tests:
+          - not_null: {config: {severity: warn}}
+  - name: int_trade_dq
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: is_valid
+        data_tests: [not_null]

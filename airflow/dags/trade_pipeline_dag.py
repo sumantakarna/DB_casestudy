@@ -1,58 +1,38 @@
-"""Airflow DAG: generate -> Snowflake load -> dbt build, with retries and email alert."""
+"""Demo DAG: generate a multi-format sample batch -> verify + load to Snowflake -> trigger the batch DAG."""
 import os
 import subprocess
 import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from airflow import DAG
-from airflow.models import Variable
-from airflow.operators.python import PythonOperator
-from airflow.utils.email import send_email
 
-PROJECT_DIR = Path(os.getenv("TRADE_PROJECT_DIR", "/opt/airflow/dws_trade_pipeline"))
-ALERT_EMAIL = os.getenv("ALERT_EMAIL", "data-platform@example.com")
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
+PROJECT_DIR = Path(os.getenv("TRADE_PROJECT_DIR", Path(__file__).resolve().parents[2]))
+OUT_DIR = PROJECT_DIR / "sample_data"
 
 
 def generate(**context):
-    batch = f"airflow-{context['ds_nodash']}-{uuid.uuid4().hex[:8]}"
-    output = PROJECT_DIR / "data" / f"{batch}.jsonl"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    count = int(Variable.get("TRADE_BATCH_COUNT", default_var="100"))
-    subprocess.run([sys.executable, str(PROJECT_DIR/"scripts/generate_trades.py"),
-                    "--output", str(output), "--count", str(count), "--batch-id", batch], check=True)
-    context["ti"].xcom_push(key="batch_id", value=batch)
-    context["ti"].xcom_push(key="file_path", value=str(output))
+    batch_id = f"DEMO-{context['ds_nodash']}-{uuid.uuid4().hex[:6].upper()}"
+    rows = os.getenv("TRADE_BATCH_ROWS", "1000")
+    subprocess.run([sys.executable, str(PROJECT_DIR / "scripts/generate_trades.py"), "--out", str(OUT_DIR),
+                    "--rows", rows, "--format", "all", "--batch-id", batch_id, "--inject-errors"], check=True)
+    return batch_id
 
 
 def load(**context):
-    path = context["ti"].xcom_pull(task_ids="generate_trades", key="file_path")
-    subprocess.run([sys.executable, str(PROJECT_DIR/"scripts/load_to_snowflake.py"),
-                    "--file", path], cwd=str(PROJECT_DIR), check=True)
+    batch_id = context["ti"].xcom_pull(task_ids="generate_sample_batch")
+    subprocess.run([sys.executable, str(PROJECT_DIR / "scripts/load_to_snowflake.py"), "--dir", str(OUT_DIR),
+                    "--batch-id", batch_id], cwd=str(PROJECT_DIR), check=True)
 
 
-def run_dbt(**context):
-    batch = context["ti"].xcom_pull(task_ids="generate_trades", key="batch_id")
-    profiles = os.getenv("DBT_PROFILES_DIR", str(PROJECT_DIR/"dbt_project"))
-    subprocess.run(["dbt", "build", "--project-dir", str(PROJECT_DIR/"dbt_project"),
-                    "--profiles-dir", profiles, "--target", os.getenv("DBT_TARGET", "dev"),
-                    "--vars", f'{{"batch_id":"{batch}"}}'], cwd=str(PROJECT_DIR), check=True)
-
-
-def failure_email(context):
-    send_email(to=ALERT_EMAIL,
-               subject=f"[AIRFLOW FAILURE] {context['dag'].dag_id}.{context['task_instance'].task_id}",
-               html_content=f"Run: {context.get('run_id')}<br>Error: {context.get('exception')}")
-
-
-default_args = {"owner": "data-platform", "depends_on_past": False, "retries": 2,
-                "retry_delay": timedelta(minutes=3), "email_on_failure": False,
-                "on_failure_callback": failure_email}
-
-with DAG(dag_id="dws_trade_processing", start_date=datetime(2025, 1, 1),
-         schedule="0 * * * *", catchup=False, max_active_runs=1,
-         default_args=default_args, tags=["snowflake", "dbt", "trades"]) as dag:
-    generate_task = PythonOperator(task_id="generate_trades", python_callable=generate)
-    load_task = PythonOperator(task_id="load_to_snowflake", python_callable=load)
-    dbt_task = PythonOperator(task_id="dbt_build", python_callable=run_dbt)
-    generate_task >> load_task >> dbt_task
+with DAG(dag_id="trade_demo_end_to_end", start_date=datetime(2026, 1, 1), schedule=None, catchup=False,
+         max_active_runs=1, tags=["demo"], default_args={"retries": 1, "retry_delay": timedelta(minutes=2)}) as dag:
+    gen = PythonOperator(task_id="generate_sample_batch", python_callable=generate)
+    ld = PythonOperator(task_id="load_batch", python_callable=load)
+    trigger = TriggerDagRunOperator(task_id="trigger_batch_processing", trigger_dag_id="deutsche_bank_trade_batch",
+                                    conf={"batch_id": "{{ ti.xcom_pull(task_ids='generate_sample_batch') }}"},
+                                    wait_for_completion=True, poke_interval=30)
+    gen >> ld >> trigger
